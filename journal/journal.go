@@ -100,7 +100,7 @@ func (w *Writer) Next() (io.Writer, error) {
 	}
 
 	w.first = true
-	w.pending = false
+	w.pending = true
 	return &singleWriter{w: w}, nil
 }
 
