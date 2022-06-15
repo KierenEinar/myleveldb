@@ -1,9 +1,12 @@
 package sstable
 
 import (
+	"bytes"
 	"encoding/binary"
 	"hash/crc32"
 	"io"
+	"myleveldb/filter"
+	"myleveldb/utils"
 )
 
 type compressionType uint
@@ -15,7 +18,7 @@ const (
 
 // blockWriter 构建一个block
 type blockWriter struct {
-	buffer          []byte
+	buffer          *bytes.Buffer
 	prevKey         []byte
 	entries         int
 	restartInterval int
@@ -23,31 +26,11 @@ type blockWriter struct {
 	scratch         [30]byte
 }
 
-// growBuffer 扩张blockwriter的buffer
-func (bw *blockWriter) growBuffer(n int) int {
-
-	c := cap(bw.buffer)
-	m := len(bw.buffer)
-
-	var dst []byte
-
-	// 说明当前cap还够再放, 不需要
-	if c+n <= m {
-		dst = bw.buffer[:m+n]
-		goto end
+func newBlockWriter(restartInterval int) *blockWriter {
+	return &blockWriter{
+		buffer:          utils.Get(),
+		restartInterval: restartInterval,
 	}
-
-	if bw.buffer == nil && n <= 1<<6 {
-		dst = make([]byte, n, 1<<6)
-		goto end
-	}
-
-	// 说明当前n+m > c, 扩容 1倍
-	dst = make([]byte, powerOfTwo(c+n))
-	copy(dst, bw.buffer)
-end:
-	bw.buffer = dst
-	return m
 }
 
 func getSharedPart(a, b []byte) []byte {
@@ -71,19 +54,21 @@ func (bw *blockWriter) append(key, value []byte) {
 	)
 
 	if bw.entries%bw.restartInterval == 0 {
-		bw.restartIndexes = append(bw.restartIndexes, len(bw.buffer))
+		bw.restartIndexes = append(bw.restartIndexes, bw.buffer.Len())
 	} else {
 		sharedKeyLen = len(getSharedPart(key, bw.prevKey))
-		unSharedKeyLen = len(key) - sharedKeyLen
 	}
 
-	n := binary.PutUvarint(bw.scratch[:], uint64(sharedKeyLen))
-	m := binary.PutUvarint(bw.scratch[n:], uint64(unSharedKeyLen))
-	_ = binary.PutUvarint(bw.scratch[n+m:], uint64(len(value)))
-	bw.buffer = append(bw.buffer, bw.scratch[:]...)
-	bw.buffer = append(bw.buffer, key[unSharedKeyLen:]...)
-	bw.buffer = append(bw.buffer, value...)
+	unSharedKeyLen = len(key) - sharedKeyLen
 
+	n0 := binary.PutUvarint(bw.scratch[0:], uint64(sharedKeyLen))
+	n1 := binary.PutUvarint(bw.scratch[n0:], uint64(unSharedKeyLen))
+	n2 := binary.PutUvarint(bw.scratch[n0+n1:], uint64(len(value)))
+
+	bw.buffer.Write(bw.scratch[:n0+n1+n2])
+	bw.buffer.Write(key[sharedKeyLen:])
+	bw.buffer.Write(value)
+	bw.prevKey = append(bw.prevKey[:0], key...)
 	bw.entries++
 
 }
@@ -96,35 +81,96 @@ func (bw *blockWriter) finish() {
 	length := len(bw.restartIndexes)
 	bw.restartIndexes = append(bw.restartIndexes, length)
 	scratch := make([]byte, 4)
+	bw.buffer.Grow(len(bw.restartIndexes) * 4)
 	for _, v := range bw.restartIndexes {
-		scratch = scratch[:0]
 		binary.LittleEndian.PutUint32(scratch, uint32(v))
-		bw.buffer = append(bw.buffer, scratch...)
+		bw.buffer.Write(scratch)
 	}
 }
 
 func (bw *blockWriter) reset() {
-	bw.buffer = bw.buffer[:0]
+	bw.buffer.Reset()
 	bw.entries = 0
 	bw.restartIndexes = bw.restartIndexes[:0]
 }
 
 // BlockSize 获取当前block块的大小
 func (bw *blockWriter) BlockSize() int {
-	return len(bw.buffer) + len(bw.restartIndexes)*4 + 4
+	return bw.buffer.Len() + len(bw.restartIndexes)*4 + 4
+}
+
+// 过滤器写入相关
+type filterWriter struct {
+	writer          io.Writer
+	buf             *bytes.Buffer
+	baseLg          uint32
+	filterGenerator filter.IFilterGenerator
+	offsets         []uint32
+	keys            int
+}
+
+// 加入过滤器中
+func (fb *filterWriter) add(key []byte) {
+	if fb.filterGenerator == nil {
+		return
+	}
+	fb.filterGenerator.Add(key)
+	fb.keys++
+}
+
+// 生成一段bit位图后丢入本身的buffer中
+func (fb *filterWriter) generate(offset uint64) {
+
+	if fb.filterGenerator == nil {
+		return
+	}
+
+	for offset/(1<<fb.baseLg) > uint64(len(fb.offsets)) {
+		fb.offsets = append(fb.offsets, uint32(fb.buf.Len()))
+		if fb.keys > 0 {
+			fb.filterGenerator.Generate(fb.buf)
+			fb.keys = 0
+		}
+	}
+}
+
+// 完成一个block的写入
+func (fb *filterWriter) finish() {
+
+	// 先把当前最后的offset写入(如果当前已经没有key值了, 那么offset为offset's offset, 反之为上一个block的offset)
+	fb.offsets = append(fb.offsets, uint32(fb.buf.Len()))
+
+	if fb.keys > 0 { // 如果当前集合存在未写入的key值
+		fb.filterGenerator.Generate(fb.buf)                   // 那么生成过滤器bits
+		fb.offsets = append(fb.offsets, uint32(fb.buf.Len())) // 写入offset's offset
+		fb.keys = 0
+	}
+
+	fb.buf.Grow(len(fb.offsets)*4 + 1)
+
+	tmp := make([]byte, 4)
+	for _, offset := range fb.offsets {
+		binary.LittleEndian.PutUint32(tmp, offset)
+		fb.buf.Write(tmp)
+		tmp = tmp[:0]
+	}
+	fb.buf.WriteByte(byte(fb.baseLg))
+
 }
 
 // Writer 将内容写入sstable的writer
 type Writer struct {
 	io.Writer
-	err                  error
-	blockSize            int             // data block的块大小
-	compressionType      compressionType // 压缩类型
-	pendingBlockHandle   *blockHandle
-	offset               uint64
-	dataBlockWriter      *blockWriter
-	dataIndexBlockWriter *blockWriter
-	scratch              [50]byte
+	filter                                     *filter.BloomFilter
+	err                                        error
+	blockSize                                  int             // data block的块大小
+	compressionType                            compressionType // 压缩类型
+	pendingBlockHandle                         *blockHandle
+	offset                                     uint64
+	dataBlockWriter                            *blockWriter
+	filterBlockWriter                          *filterWriter
+	metaIndexBlockWriter, dataIndexBlockWriter *blockWriter
+	scratch                                    [50]byte
 }
 
 // Append 将内容写入到sstable
@@ -135,12 +181,71 @@ func (w *Writer) Append(key, value []byte) {
 
 	w.dataBlockWriter.append(key, value)
 
-	w.filterBlock.append(key)
+	w.filterBlockWriter.add(key)
 
 	// 如果当前block写满了, 那么直接写入writer中
 	if w.dataBlockWriter.BlockSize() >= w.blockSize {
 		w.err = w.finishBlock(w.dataBlockWriter)
 	}
+
+}
+
+// Close 关闭实现
+// 暂且默认布隆过滤器是打开的, 因为显著提高性能
+func (w *Writer) Close() error {
+
+	var err error
+
+	// 如果data block还有没写入到设备块的, 那么写入到设备块
+	if w.dataBlockWriter.buffer.Len() > 0 {
+		// 先把block handle 刷到 index block中
+		w.flushPendingBH(nil)
+		// 写入一个block
+		err = w.finishBlock(w.dataBlockWriter)
+		if err != nil {
+			return err
+		}
+	}
+
+	var filterBh *blockHandle
+
+	// 将bloom filter的内容写入到设备块中
+	w.filterBlockWriter.finish()
+	filterBh, err = w.writeBlock(w.filterBlockWriter.buf, noCompress)
+	if err != nil {
+		return err
+	}
+
+	var metaBlockHandle *blockHandle
+	// 写入metablock handle
+	key := []byte("filter." + w.filter.Name())
+	n := encodeBlockHandle(w.scratch[:20], *filterBh)
+	w.metaIndexBlockWriter.append(key, w.scratch[:n])
+	metaBlockHandle, err = w.writeBlock(w.metaIndexBlockWriter.buffer, w.compressionType)
+	if err != nil {
+		return err
+	}
+
+	// 写入indexblock
+	var indexBlockHandle *blockHandle
+	w.dataIndexBlockWriter.finish()
+	indexBlockHandle, err = w.writeBlock(w.dataIndexBlockWriter.buffer, w.compressionType)
+	if err != nil {
+		return err
+	}
+
+	footer := make([]byte, footerLength)
+
+	n = encodeBlockHandle(footer, *metaBlockHandle)
+	_ = encodeBlockHandle(footer[n:], *indexBlockHandle)
+
+	copy(footer[footerLength-len(magic):], magic)
+
+	_, err = w.Writer.Write(footer)
+	if err != nil {
+		return err
+	}
+	return nil
 
 }
 
@@ -151,7 +256,7 @@ func (w *Writer) finishBlock(block *blockWriter) error {
 	block.finish()
 
 	// 真正的将block写入到设备块中
-	bh, err := w.writerBlock(block, w.compressionType)
+	bh, err := w.writeBlock(block.buffer, w.compressionType)
 
 	if err != nil {
 		return err
@@ -161,21 +266,21 @@ func (w *Writer) finishBlock(block *blockWriter) error {
 
 	w.dataBlockWriter.reset()
 
-	w.filterBlock.finishBlock(w.offset)
+	w.filterBlockWriter.generate(w.offset)
 
 	return nil
 }
 
-func (w *Writer) writerBlock(block *blockWriter, compressionType compressionType) (*blockHandle, error) {
+func (w *Writer) writeBlock(buffer *bytes.Buffer, compressionType compressionType) (*blockHandle, error) {
 
 	var buf []byte
 
 	if compressionType == compress {
 
 	} else {
-		n := block.growBuffer(5)
-		block.buffer[n] = blockTypeNoCompression
-		buf = block.buffer
+		buffer.Grow(5)
+		buffer.WriteByte(blockTypeNoCompression)
+		buf = buffer.Bytes()
 	}
 
 	checkSum := crc32.ChecksumIEEE(buf)

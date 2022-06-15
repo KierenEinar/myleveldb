@@ -1,0 +1,70 @@
+package xollections
+
+/*
+目录
+lrucache简介
+	1. 实现了map的基本功能(简称lrumap)
+	2. 实现了双向链表的队列, recent(常量)的next永远指向最新的节点, recent的prev永远指向最旧的节点
+
+lrumap, 实现了无阻塞的扩/缩容, 主要采用拉链法
+
+		+------+     +----+     +----+    +----+
+		| slot | --- |    | --- |    |--- |    |
+		+------+     +----+     +----+    +----+
+		| slot |
+		+------+
+		| slot |
+		+------+     +----+     +----+
+		| slot |---  |    | --- |    |
+		+------+     +----+     +----+
+		| slot |
+		+------+
+		| slot |
+		+------+
+
+主要组成对象
+
+Node: {
+   hash int32
+   key  []byte
+   value []byte
+}
+
+bucket: {
+    nodes []Node
+    freeze bool  // 是否冻结, 如果标志位是true的话, 说明该bucket正在扩/缩容, 需要重新获取新的bucket返回
+    rwlock RWMutex
+}
+
+mbucket: { // 一个mbucket代表一个集合
+
+    buckets []*bucket
+    resizeInProgress int // 是否正在扩/缩容
+    allocBuckets []bucket // 如果allocBuckets有值, 说明当前bucket正在扩/缩容, 并且内容来自 allocBuckets
+    masks   int32  // shard的掩码
+    overflow int32
+    growThreshold int32
+    shrinkThreshold int32
+}
+
+lrumap: {
+    mbucket *mbucket
+    nodes int64
+}
+
+扩缩容流程:
+
+扩容流程
+1. growThreshold = mbucket的slot槽数 * 默认一个槽最多存的节点数量(默认是32)
+当前nodes的总数量如果超过 growThreshold 的话, 那么就需要扩容
+
+2. overflow, 如果当前slot对应的节点数量超过 默认一个槽最多存的节点数量(默认是32) 的话, 那么overflow+1,
+当overflow超过全局的默认数量(默认是128)的话，那么就需要扩容
+
+缩容流程
+当前nodes的总数量如果小于 shrinkThreshold 并且 当前 shrinkThreshold 不小于 1 << 4的话，那么可以执行缩容流程
+
+
+
+
+*/

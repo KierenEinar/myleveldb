@@ -80,7 +80,7 @@ index block 每一个kv对都是针对data block而言的
 	+----------+----------+----------+----------+----------+----------+--------+--------+--------+
 
 查找一个key的过程
-	先定位index block, 找出第一个大于或等于当前key的idx, 那么idx-1则是要找的data block, 有可能key不在idx-1,
+	先定位index block, 找出第一个大于当前key的idx(注意, 一定是大于), 那么idx-1则是要找的data block, 有可能key不在idx-1,
 	但是在idx的 data block, 所以当定位不到的时候需要往下一个data block的首个kv对的key中查找, 注(可以先用bloom filter判断当前key是否在集合中)
 	有可能最后一个key是 abcd, 下一个block的key是abce, 那么index block data的key就是abce, 所以需要向下一个block查找
 
@@ -98,6 +98,16 @@ magic: The magic are first 64-bit of SHA-1 sum of "http://code.google.com/p/leve
 
 注: 所有的字节存储方式均是小端序
 
+datablock的seek过程(seek是查找大于key的offset和restartPoint的index):
+	按照restartsPoint的key, 采用sort.Search, 当访问到第一个restartPoint是大于key的, 说明key在idx-1的区间中,
+	有一个特殊情况,
+		idx=0, 此时key的区间只能在idx到idx+1中
+
+blockIter的Seek过程
+	按照index block定位到最小大于key的 block handle, 然后根据此bh去加载对应的data block
+	datablock去seek大于key的offset, 从offset开始往后遍历, 找到第一个大于等于key的即可返回
+
+
 **/
 
 const (
@@ -113,10 +123,10 @@ type blockHandle struct {
 	length uint64
 }
 
-func decodeBlockHandle(src []byte) (*blockHandle, int) {
+func decodeBlockHandle(src []byte) (blockHandle, int) {
 	offset, n := binary.Uvarint(src)
 	length, m := binary.Uvarint(src[n:])
-	return &blockHandle{
+	return blockHandle{
 		offset: offset,
 		length: length,
 	}, n + m
