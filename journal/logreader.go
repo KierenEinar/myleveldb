@@ -47,6 +47,12 @@ type Reader struct {
 	buf    [blockSize]byte // 目前读入到的一整块block
 }
 
+func NewReader(reader io.Reader) *Reader {
+	return &Reader{
+		reader: reader,
+	}
+}
+
 type chunkReader struct {
 	r *Reader
 }

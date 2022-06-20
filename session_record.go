@@ -408,3 +408,15 @@ func (p *SessionRecord) decode(r Reader) (err error) {
 	}
 
 }
+
+func (p *SessionRecord) resetAddRecord() {
+	p.atRecords = p.atRecords[:0]
+}
+
+func (p *SessionRecord) resetDelRecord() {
+	p.dlRecords = p.dlRecords[:0]
+}
+
+func (p *SessionRecord) resetCompatPtr() {
+	p.compactPtrs = p.compactPtrs[:0]
+}

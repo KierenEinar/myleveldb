@@ -7,9 +7,11 @@ import (
 
 // Version 数据库某一时刻的状态
 type Version struct {
-	id      int64    // vid
-	levels  []tFiles // 每一层的sstable文件描述符
-	session *Session
+	ref      int64
+	id       int64    // vid
+	levels   []tFiles // 每一层的sstable文件描述符
+	session  *Session
+	released bool
 }
 
 func (ver *Version) newVersionStaging() *VersionStaging {
