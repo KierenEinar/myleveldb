@@ -37,8 +37,8 @@ type Session struct {
 	versionRelCh   chan *VersionRelease
 }
 
-// Open 打开存储, 获得session
-func Open(stor storage.Storage) (*Session, error) {
+// 打开存储, 获得session
+func newSession(stor storage.Storage) (*Session, error) {
 
 	if stor == nil {
 		return nil, os.ErrInvalid
@@ -143,13 +143,6 @@ func (s *Session) newVersion() *Version {
 }
 
 func (s *Session) recover() (err error) {
-
-	defer func() {
-		if err == os.ErrNotExist {
-			err = nil
-		}
-		return
-	}()
 
 	fd, err := s.stor.GetMeta()
 	if err != nil {
