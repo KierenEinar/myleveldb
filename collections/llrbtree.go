@@ -102,7 +102,7 @@ type LLRBTree struct {
 	root     *lLRBTReeNode
 	ref      int32 // 被引用的次数
 	released bool
-	cmp      comparer.Compare
+	cmp      comparer.BasicComparer
 	data     []byte
 	size     int
 	pos      int
@@ -112,7 +112,7 @@ type LLRBTree struct {
 
 // NewLLRBTree 实例化rbtree
 // note, 需要手动Close方法才能释放llrbtree, 否则常驻内存
-func NewLLRBTree(capacity int, cmp comparer.Compare, pool *utils.BytePool) *LLRBTree {
+func NewLLRBTree(capacity int, cmp comparer.BasicComparer, pool *utils.BytePool) *LLRBTree {
 	tree := new(LLRBTree)
 	tree.capacity = capacity
 	tree.cmp = cmp
@@ -166,6 +166,16 @@ func (rbTree *LLRBTree) UnRef() {
 		fmt.Printf("rbtree close ... \n")
 		rbTree.reset()
 	}
+}
+
+func (rbTree *LLRBTree) Reset() {
+	rbTree.rw.Lock()
+	defer rbTree.rw.Unlock()
+	rbTree.ref = 0
+	rbTree.pos = 0
+	rbTree.data = rbTree.data[:0]
+	rbTree.pool.Put(rbTree.data)
+	rbTree.size = 0
 }
 
 func (rbTree *LLRBTree) reset() {
@@ -276,7 +286,7 @@ func (rbTree *LLRBTree) put(key, value []byte) {
 			break
 		}
 		parent = x
-		compare = cmp(x.key(rbTree.data), key)
+		compare = cmp.Compare(x.key(rbTree.data), key)
 		if compare > 0 {
 			x = x.left
 		} else if compare < 0 {
@@ -314,7 +324,7 @@ func (rbTree *LLRBTree) put(key, value []byte) {
 }
 
 // 递归式的添加, 由于需要开栈、性能不如非递归版本, 但是实现相对简单
-func (rbTreeNode *lLRBTReeNode) put(cmp comparer.Compare, key, value []byte, kvIndex *nodeKvIndex, data []byte) *lLRBTReeNode {
+func (rbTreeNode *lLRBTReeNode) put(cmp comparer.BasicComparer, key, value []byte, kvIndex *nodeKvIndex, data []byte) *lLRBTReeNode {
 	if rbTreeNode == nil {
 		return &lLRBTReeNode{
 			nodeKvIndex: *kvIndex,
@@ -322,7 +332,7 @@ func (rbTreeNode *lLRBTReeNode) put(cmp comparer.Compare, key, value []byte, kvI
 		}
 	}
 
-	compare := cmp(rbTreeNode.key(data), key)
+	compare := cmp.Compare(rbTreeNode.key(data), key)
 
 	if compare > 0 {
 		rbTreeNode.left = rbTreeNode.left.put(cmp, key, value, kvIndex, data)
@@ -390,10 +400,10 @@ func flipColor(h *lLRBTReeNode) {
 	h.color = !h.color
 }
 
-func exchangeParent(cmp comparer.Compare, parent *lLRBTReeNode, tree *LLRBTree) {
+func exchangeParent(cmp comparer.BasicComparer, parent *lLRBTReeNode, tree *LLRBTree) {
 	if parent.parent != nil {
 
-		compare := cmp(parent.parent.key(tree.data), parent.key(tree.data))
+		compare := cmp.Compare(parent.parent.key(tree.data), parent.key(tree.data))
 		if compare > 0 {
 			parent.parent.left = parent
 		} else {
@@ -452,7 +462,7 @@ func (rbTree *LLRBTree) Get(key []byte) ([]byte, error) {
 		if x == nil {
 			break
 		}
-		compare := rbTree.cmp(x.key(rbTree.data), key)
+		compare := rbTree.cmp.Compare(x.key(rbTree.data), key)
 		if compare > 0 {
 			x = x.left
 		} else if compare < 0 {
@@ -473,7 +483,7 @@ func (rbTree *LLRBTree) findGE(key []byte) (*lLRBTReeNode, error) {
 		if x == nil {
 			break
 		}
-		compare := rbTree.cmp(x.key(rbTree.data), key)
+		compare := rbTree.cmp.Compare(x.key(rbTree.data), key)
 		if compare < 0 {
 			x = x.right
 		} else if compare > 0 {
@@ -535,6 +545,16 @@ func (rbTree *LLRBTree) Close() error {
 // DebugIterString just 4 debug
 func (rbTree *LLRBTree) DebugIterString() {
 	rbTree.root.debugIter(rbTree.data)
+}
+
+func (rbTree *LLRBTree) Free() (int, error) {
+	rbTree.rw.Lock()
+	if rbTree.released {
+		rbTree.rw.Unlock()
+		return 0, ErrClosed
+	}
+	defer rbTree.rw.Unlock()
+	return cap(rbTree.data) - len(rbTree.data), nil
 }
 
 type iterDir uint8

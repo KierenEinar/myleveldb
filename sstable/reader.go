@@ -31,10 +31,10 @@ type dataBlock struct {
 	restartsLen    int
 	data           []byte
 	bytePool       *utils.BytePool
-	cmp            comparer.Compare
+	cmp            comparer.BasicComparer
 }
 
-func newDataBlock(data []byte, bytePool *utils.BytePool, cmp comparer.Compare) *dataBlock {
+func newDataBlock(data []byte, bytePool *utils.BytePool, cmp comparer.BasicComparer) *dataBlock {
 	restartsNum := int(binary.LittleEndian.Uint32(data[len(data)-4:]))
 	restartsOffset := len(data) - (restartsNum+1)*4
 	return &dataBlock{
@@ -55,7 +55,7 @@ func (block *dataBlock) seekRestartPoint(key []byte) (offset, index int) {
 		nKey, n := binary.Uvarint(block.data[offset:]) // 未shareprefix 的key长度, 和占用的字节大小
 		_, m1 := binary.Uvarint(block.data[offset+n:]) // 获取value len的长度
 		restartKey := block.data[offset+n+m1 : offset+n+m1+int(nKey)]
-		return block.cmp(restartKey, key) > 1
+		return block.cmp.Compare(restartKey, key) > 0
 	})
 
 	if index > 0 {
@@ -134,10 +134,9 @@ type BlockIter struct {
 	// eoi 代表是否结束遍历
 	soi, eoi bool
 
-	// 是否释放掉
-	released bool
-
 	err error
+
+	utils.BasicReleaser
 }
 
 func newBlockIter(dataBlock *dataBlock, blockReleaser utils.Releaser) *BlockIter {
@@ -175,7 +174,7 @@ func (bi *BlockIter) Seek(key []byte) bool {
 	bi.restartIndex = restartIndex
 
 	for bi.Next() {
-		if bi.dataBlock.cmp(bi.key, key) >= 0 {
+		if bi.dataBlock.cmp.Compare(bi.key, key) >= 0 {
 			return true
 		}
 	}
@@ -184,7 +183,29 @@ func (bi *BlockIter) Seek(key []byte) bool {
 
 }
 
+func (bi *BlockIter) First() bool {
+
+	if bi.Released() {
+		return false
+	}
+
+	if bi.eoi {
+		bi.eoi = false
+	}
+
+	if !bi.soi {
+		bi.soi = true
+	}
+
+	return bi.Next()
+
+}
+
 func (bi *BlockIter) Next() bool {
+
+	if bi.Released() {
+		return false
+	}
 
 	if bi.eoi {
 		return false
@@ -223,15 +244,6 @@ func (bi *BlockIter) Value() []byte {
 	return bi.value
 }
 
-func (bi *BlockIter) UnRef() {
-	if !bi.released {
-		bi.released = true
-		if bi.blockReleaser != nil {
-			bi.blockReleaser.UnRef()
-		}
-	}
-}
-
 // Reader reader读取操作
 type Reader struct {
 	reader io.ReaderAt // 随机读的io
@@ -245,7 +257,7 @@ type Reader struct {
 
 	filter filter.IFilter
 	// cmp
-	cmp comparer.Compare
+	cmp comparer.BasicComparer
 
 	// 字节数组池对象
 	bytePool *utils.BytePool
@@ -371,7 +383,7 @@ func (r *Reader) find(key []byte, filtered, noValue bool) (rkey []byte, rvalue [
 
 	/ offset0 / offset1 / offset2
 	--------- --------- ---------
-	|  abc  | |  bbc  | |   cc   |
+	|  abc  | |  bbc  | |   d    |
 	--------- --------- ---------
 	  0 100    100 120    220 50
 
@@ -445,12 +457,16 @@ func (r *Reader) find(key []byte, filtered, noValue bool) (rkey []byte, rvalue [
 			return nil, nil, ErrBlockHandle
 		}
 
-		dataIter1, err := r.getDataIter(blockHandle)
+		dataIter.UnRef()
+
+		dataIter, err = r.getDataIter(blockHandle)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		defer dataIter1.UnRef()
+		if !dataIter.Next() {
+			return nil, nil, ErrNotFound
+		}
 
 	}
 
@@ -481,7 +497,7 @@ func (r *Reader) Get(key []byte) (value []byte, err error) {
 		return nil, err
 	}
 
-	if r.cmp(rkey, key) != 0 {
+	if r.cmp.Compare(rkey, key) != 0 {
 		value = nil
 		err = ErrNotFound
 	}
@@ -489,7 +505,7 @@ func (r *Reader) Get(key []byte) (value []byte, err error) {
 }
 
 // NewReader 新建一个sstable 的reader对象
-func NewReader(readFd io.ReaderAt, size int64, cmp comparer.Compare,
+func NewReader(readFd io.ReaderAt, size int64, cmp comparer.BasicComparer,
 	nsCache *cache.NamespaceCache) (*Reader, error) {
 
 	if size < footerLength {
@@ -542,5 +558,52 @@ func NewReader(readFd io.ReaderAt, size int64, cmp comparer.Compare,
 	metaIndexIter.UnRef()
 
 	return r, nil
+
+}
+
+type indexedIter struct {
+	utils.BasicReleaser
+	*BlockIter
+	r *Reader
+}
+
+func (i *indexedIter) Get() iter.Iterator {
+
+	value := i.value
+	if value == nil {
+		return nil
+	}
+
+	bh, n := decodeBlockHandle(value)
+	if n == 0 {
+		return nil
+	}
+
+	iter, err := i.r.getDataIter(bh)
+	if err != nil {
+		return nil
+	}
+	return iter
+}
+
+func (r *Reader) NewIterator() iter.Iterator {
+
+	indexBlock, releaser, err := r.readBlockCached(r.indexBH)
+	if err != nil {
+		return nil
+	}
+	index := &indexedIter{
+		BlockIter: newBlockIter(indexBlock, releaser),
+		r:         r,
+	}
+	return iter.NewIndexedIterator(index)
+}
+
+func (r *Reader) UnRef() {
+	//todo release the resources
+
+	if closer, ok := r.reader.(io.Closer); ok {
+		closer.Close()
+	}
 
 }

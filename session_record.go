@@ -232,6 +232,18 @@ func (p *SessionRecord) addRecord(record atRecord) {
 	p.atRecords = append(p.atRecords, record)
 }
 
+func (p *SessionRecord) addTableFile(level int, file *tFile) *atRecord {
+
+	return &atRecord{
+		level: level,
+		num:   file.fd.Num,
+		size:  int(file.size),
+		min:   file.min,
+		max:   file.max,
+	}
+
+}
+
 func (p *SessionRecord) hasField(rec int) bool {
 	return (p.hasRec & 1 << rec) != 0
 }

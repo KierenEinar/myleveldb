@@ -1,19 +1,18 @@
 package utils
 
 import (
-	"myleveldb/comparer"
 	"testing"
 )
 
 var intCmp = func(a, b interface{}) int {
-	aInt := a.(int)
-	bInt := b.(int)
-	if aInt^bInt == 0 {
-		return 0
-	} else if aInt > bInt {
+	ac := a.(int)
+	bc := b.(int)
+	if ac < bc {
+		return -1
+	} else if ac > bc {
 		return 1
 	} else {
-		return -1
+		return 0
 	}
 }
 
@@ -21,7 +20,7 @@ func TestBinarySearch(t *testing.T) {
 	type args struct {
 		arr []interface{}
 		key interface{}
-		cmp comparer.Compare
+		cmp Compare
 	}
 
 	tests := []struct {
@@ -34,7 +33,7 @@ func TestBinarySearch(t *testing.T) {
 			args: struct {
 				arr []interface{}
 				key interface{}
-				cmp comparer.Compare
+				cmp Compare
 			}{
 				arr: []interface{}{1, 3, 5, 7, 9},
 				key: 4,
@@ -47,7 +46,7 @@ func TestBinarySearch(t *testing.T) {
 			args: struct {
 				arr []interface{}
 				key interface{}
-				cmp comparer.Compare
+				cmp Compare
 			}{
 				arr: []interface{}{1, 3, 5, 7, 9},
 				key: 12,
@@ -60,7 +59,7 @@ func TestBinarySearch(t *testing.T) {
 			args: struct {
 				arr []interface{}
 				key interface{}
-				cmp comparer.Compare
+				cmp Compare
 			}{
 				arr: []interface{}{1, 3, 5, 7, 9},
 				key: 3,
@@ -73,7 +72,7 @@ func TestBinarySearch(t *testing.T) {
 			args: struct {
 				arr []interface{}
 				key interface{}
-				cmp comparer.Compare
+				cmp Compare
 			}{
 				arr: []interface{}{1, 3, 5, 7, 9},
 				key: -5,

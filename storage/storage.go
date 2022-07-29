@@ -48,6 +48,13 @@ func (fd *FileDesc) FileDescOK() bool {
 	return fd.Num > 0
 }
 
+func (fd *FileDesc) Zero() bool {
+	if fd.Num == 0 {
+		return true
+	}
+	return false
+}
+
 // Syncer 文件刷盘
 type Syncer interface {
 	Sync() error

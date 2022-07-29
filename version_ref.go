@@ -190,6 +190,7 @@ func (s *Session) refLoop() {
 					applyDelta(delta)
 				}
 				delete(releasedRef, next)
+				delete(versionRef, next)
 				next += 1
 				continue
 			}

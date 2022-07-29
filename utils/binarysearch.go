@@ -1,7 +1,5 @@
 package utils
 
-import "myleveldb/comparer"
-
 // BinarySearch 二分搜索, 类似于java的collections.binarysearch()
 // 因为用不惯golang的sort.Search
 /***
@@ -47,7 +45,7 @@ return -(2+1)
 
 */
 
-func BinarySearch(arr []interface{}, key interface{}, cmp comparer.Compare) int {
+func BinarySearch(arr []interface{}, key interface{}, cmp Compare) int {
 	lo := 0
 	hi := len(arr) - 1
 	for lo <= hi {

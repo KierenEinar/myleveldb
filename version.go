@@ -208,3 +208,19 @@ func (vs *VersionStaging) newVersion() *Version {
 	}
 	return nv
 }
+
+func (v *Version) fillRecord(s *SessionRecord) {
+	s.resetAddRecord()
+	for idx, level := range v.levels {
+		for j := range level {
+			s.addTableFile(idx, &level[j])
+		}
+	}
+}
+
+func (v *Version) tLen(level int) int {
+	if level >= len(v.levels) {
+		return 0
+	}
+	return len(v.levels[level])
+}

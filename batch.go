@@ -3,6 +3,10 @@ package myleveldb
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"io"
+	error2 "myleveldb/error"
+	"myleveldb/memdb"
 )
 
 /**
@@ -23,6 +27,10 @@ batch写入的entry格式
 
 **/
 
+const (
+	batchHeaderLen = 12
+)
+
 type Batch struct {
 	data        *bytes.Buffer
 	index       []BatchIndex
@@ -37,6 +45,14 @@ type BatchIndex struct {
 	KeyLen   int
 	ValuePos int
 	ValueLen int
+}
+
+func (bi *BatchIndex) key(data []byte) []byte {
+	return data[bi.KeyPos:bi.KeyLen]
+}
+
+func (bi *BatchIndex) value(data []byte) []byte {
+	return data[bi.ValuePos:bi.ValueLen]
 }
 
 func (b *Batch) BatchLen() uint32 {
@@ -94,11 +110,6 @@ func (b *Batch) appendEntry(keyType keyType, key, value []byte) {
 
 }
 
-//// DecodeBatch 解析batch
-//func DecodeBatch(data []byte, fn func(kt keyType, key, value []byte)) {
-//
-//}
-
 func (b *Batch) Put(key, value []byte) {
 	b.appendEntry(keyTypeVal, key, value)
 }
@@ -110,4 +121,102 @@ func (b *Batch) Delete(key []byte) {
 func (b *Batch) reset() {
 	b.data.Reset()
 	b.index = b.index[:0]
+	b.internalLen = 0
+}
+
+func writeBatchWithHeader(writer io.Writer, seq uint64, b *Batch) error {
+
+	header := make([]byte, batchHeaderLen)
+
+	binary.LittleEndian.PutUint64(header, seq)
+	binary.LittleEndian.PutUint32(header[8:], b.BatchLen())
+
+	_, err := writer.Write(header)
+	if err != nil {
+		return err
+	}
+
+	_, err = writer.Write(b.data.Bytes())
+	if err != nil {
+		return err
+	}
+	return nil
+
+}
+
+func decodeBatchToMem(chunk []byte, expectSeq uint64, memDb *memdb.MemDB) (seq uint64, batchLen int, err error) {
+
+	header := chunk[:batchHeaderLen]
+
+	seq = binary.LittleEndian.Uint64(header[:8])
+	batchLen = int(binary.LittleEndian.Uint32(header[8:]))
+
+	if seq < expectSeq {
+		err = error2.NewBatchDecodeHeaderErrWithSeq(expectSeq, seq)
+		return
+	}
+
+	data := chunk[batchHeaderLen:]
+
+	err = decodeBatch(data, batchLen, func(idx int, key []byte, kt keyType, value []byte) error {
+		return memDb.Put(makeInternalKey(key, seq+uint64(idx), kt), value)
+	})
+
+	return
+
+}
+
+func decodeBatch(data []byte, batchLen int, f func(idx int, key []byte, kt keyType, value []byte) error) error {
+
+	pos := 0
+	end := len(data)
+	idx := 0
+	for ; pos < end; idx++ {
+
+		// decode keytype
+		if pos+1 > end {
+			return fmt.Errorf("decode key type pos out of range")
+		}
+		kt := keyType(data[pos : pos+1][0])
+		pos += 1
+
+		// decode klen
+		kLen, n := binary.Varint(data[pos:])
+		pos += n
+
+		// decode key
+		if pos+int(kLen) >= end {
+			return fmt.Errorf("decode key pos out of range")
+		}
+		key := data[pos : pos+int(kLen)]
+
+		if kt == keyTypeDel {
+			err := f(idx, key, kt, nil)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		vLen, m := binary.Varint(data[pos:])
+		pos += m
+		if pos+int(vLen) >= end {
+			return fmt.Errorf("decode value pos out of range")
+		}
+
+		v := data[pos : pos+int(vLen)]
+
+		err := f(idx, key, kt, v)
+		if err != nil {
+			return err
+		}
+
+	}
+
+	if idx != batchLen-1 {
+		return fmt.Errorf("batch decode, expectEntryLen=%d, realEntryLen=%d", batchLen, idx+1)
+	}
+
+	return nil
+
 }

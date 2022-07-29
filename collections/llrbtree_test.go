@@ -1,9 +1,9 @@
 package collections
 
 import (
-	"bytes"
 	"fmt"
 	"math/rand"
+	"myleveldb/comparer"
 	"myleveldb/utils"
 	"testing"
 
@@ -11,15 +11,11 @@ import (
 )
 
 var (
-	cmp = func(a, b interface{}) int {
-		return bytes.Compare(a.([]byte), b.([]byte))
-	}
-
 	pool = utils.NewBytePool(1 << 20)
 )
 
 func BenchmarkLLRBTree_Put(t *testing.B) {
-	tree := NewLLRBTree(1<<22, cmp, pool)
+	tree := NewLLRBTree(1<<22, comparer.DefaultComparer, pool)
 
 	for idx := 0; idx < 1000; idx++ {
 		key := []byte(fmt.Sprintf("key-%x", idx))
@@ -38,7 +34,7 @@ func BenchmarkLLRBTree_Put(t *testing.B) {
 }
 
 func BenchmarkLLRBTree_Set(t *testing.B) {
-	tree := NewLLRBTree(1<<22, cmp, pool)
+	tree := NewLLRBTree(1<<22, comparer.DefaultComparer, pool)
 
 	for idx := 0; idx < 1000; idx++ {
 		key := []byte(fmt.Sprintf("key-%x", idx))
@@ -59,7 +55,7 @@ func BenchmarkLLRBTree_Set(t *testing.B) {
 
 func TestLLRBTree_Put(t *testing.T) {
 
-	tree := NewLLRBTree(1<<22, cmp, pool)
+	tree := NewLLRBTree(1<<22, comparer.DefaultComparer, pool)
 
 	for idx := uint8(0); idx < uint8(10); idx++ {
 		key := []byte(fmt.Sprintf("key-%x", idx))
@@ -106,7 +102,7 @@ func TestLLRBTree_Put(t *testing.T) {
 
 	_ = tree.Close()
 
-	rbTree := NewLLRBTree(1<<22, cmp, pool)
+	rbTree := NewLLRBTree(1<<22, comparer.DefaultComparer, pool)
 	for i := 0; i < 20; i++ {
 		randNum := rand.Int() % 100000
 		key := []byte(fmt.Sprintf("key-%d", randNum))
@@ -123,7 +119,7 @@ func TestLLRBTree_Put(t *testing.T) {
 }
 
 func TestLLRBTreeIter_Next(t *testing.T) {
-	tree := NewLLRBTree(1<<22, cmp, pool)
+	tree := NewLLRBTree(1<<22, comparer.DefaultComparer, pool)
 
 	for idx := 0; idx < 1000; idx++ {
 
@@ -152,7 +148,7 @@ func TestLLRBTreeIter_Next(t *testing.T) {
 }
 
 func TestLLRBTreeIter_Seek(t *testing.T) {
-	tree := NewLLRBTree(1<<22, cmp, pool)
+	tree := NewLLRBTree(1<<22, comparer.DefaultComparer, pool)
 
 	for idx := 0; idx < 1000; idx++ {
 

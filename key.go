@@ -57,6 +57,11 @@ func (ik internalKey) uKey() []byte {
 	return ik[:len(ik)-8]
 }
 
+func (ik internalKey) num() uint64 {
+	ik.assert()
+	return binary.LittleEndian.Uint64(ik[len(ik)-8:])
+}
+
 func (ik internalKey) assert() {
 	if ik == nil {
 		panic("ik is nil")

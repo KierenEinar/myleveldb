@@ -12,7 +12,7 @@ func (iFilter iFilter) Contains(data []byte, key []byte) bool {
 	return iFilter.IFilter.Contains(data, internalKey(key).uKey())
 }
 
-func (iFilter iFilter) NewFilterGenerator(bitsPerKey uint8) iFilterGenerator {
+func (iFilter iFilter) NewFilterGenerator(bitsPerKey uint8) filter.IFilterGenerator {
 	return iFilterGenerator{iFilter.IFilter.NewFilterGenerator(bitsPerKey)}
 }
 

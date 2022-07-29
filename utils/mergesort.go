@@ -1,7 +1,5 @@
 package utils
 
-import "myleveldb/comparer"
-
 // MergeSort 归并排序
 /**
 *							+-----+-----+-----+-----+-----+
@@ -32,13 +30,13 @@ import "myleveldb/comparer"
 *						|  2  |  4  |  5  |  7  |  9  |
 *						+-----+-----+-----+-----+-----+
  */
-func MergeSort(arr []interface{}, cmp comparer.Compare) {
+func MergeSort(arr []interface{}, cmp Compare) {
 	aux := make([]interface{}, len(arr))
 	copy(aux, arr)
 	mergeSort(arr, aux, 0, len(arr)-1, cmp)
 }
 
-func mergeSort(arr, aux []interface{}, lo int, hi int, cmp comparer.Compare) {
+func mergeSort(arr, aux []interface{}, lo int, hi int, cmp Compare) {
 
 	if lo >= hi {
 		return
@@ -50,7 +48,7 @@ func mergeSort(arr, aux []interface{}, lo int, hi int, cmp comparer.Compare) {
 	merge(arr, aux, lo, mid, hi, cmp)
 }
 
-func merge(arr, aux []interface{}, lo, mid, hi int, cmp comparer.Compare) {
+func merge(arr, aux []interface{}, lo, mid, hi int, cmp Compare) {
 
 	i := lo
 	j := mid + 1

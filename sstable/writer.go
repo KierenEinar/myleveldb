@@ -16,8 +16,20 @@ const (
 	compress   compressionType = 1 // 压缩
 )
 
+const (
+	defaultBlockSize                 = 2 << 10
+	defaultCompressionType           = noCompress
+	defaultDataBlockRestartInterval  = 16
+	defaultFilterWriterBaseLg        = 2 << 10
+	defaultFilterBitsPerKey          = 10
+	defaultMetaBlockRestartInterval  = 1
+	defaultIndexBlockRestartInterval = 1
+	defaultFilterBytePoolNamespace   = "filter"
+)
+
 // blockWriter 构建一个block
 type blockWriter struct {
+	bPool           *utils.BytePool
 	buffer          *bytes.Buffer
 	prevKey         []byte
 	entries         int
@@ -26,9 +38,10 @@ type blockWriter struct {
 	scratch         [30]byte
 }
 
-func newBlockWriter(restartInterval int) *blockWriter {
+func newBlockWriter(restartInterval int, bPool *utils.BytePool, size int64) *blockWriter {
 	return &blockWriter{
-		buffer:          utils.Get(),
+		bPool:           bPool,
+		buffer:          bytes.NewBuffer(bPool.Get(size)),
 		restartInterval: restartInterval,
 	}
 }
@@ -99,6 +112,12 @@ func (bw *blockWriter) BlockSize() int {
 	return bw.buffer.Len() + len(bw.restartIndexes)*4 + 4
 }
 
+func (bw *blockWriter) Close() error {
+	bw.buffer.Reset()
+	bw.bPool.Put(bw.buffer.Bytes())
+	return nil
+}
+
 // 过滤器写入相关
 type filterWriter struct {
 	writer          io.Writer
@@ -152,16 +171,29 @@ func (fb *filterWriter) finish() {
 	for _, offset := range fb.offsets {
 		binary.LittleEndian.PutUint32(tmp, offset)
 		fb.buf.Write(tmp)
-		tmp = tmp[:0]
 	}
 	fb.buf.WriteByte(byte(fb.baseLg))
 
 }
 
+func (fb *filterWriter) Close() error {
+	utils.PutPoolNamespace(defaultFilterBytePoolNamespace, fb.buf)
+	return nil
+}
+
+func newFilterWriter(writer io.Writer, filterGenerator filter.IFilterGenerator) *filterWriter {
+	return &filterWriter{
+		writer:          writer,
+		buf:             utils.GetPoolNamespace(defaultFilterBytePoolNamespace),
+		baseLg:          defaultFilterWriterBaseLg,
+		filterGenerator: filterGenerator,
+	}
+}
+
 // Writer 将内容写入sstable的writer
 type Writer struct {
 	io.Writer
-	filter                                     *filter.BloomFilter
+	filter                                     filter.IFilter
 	err                                        error
 	blockSize                                  int             // data block的块大小
 	compressionType                            compressionType // 压缩类型
@@ -171,6 +203,20 @@ type Writer struct {
 	filterBlockWriter                          *filterWriter
 	metaIndexBlockWriter, dataIndexBlockWriter *blockWriter
 	scratch                                    [50]byte
+}
+
+func NewWriter(w io.Writer, filter filter.IFilter, bPool *utils.BytePool, size int64) *Writer {
+	writer := &Writer{
+		Writer:               w,
+		filter:               filter,
+		blockSize:            defaultBlockSize,
+		compressionType:      defaultCompressionType,
+		dataBlockWriter:      newBlockWriter(defaultDataBlockRestartInterval, bPool, size),
+		filterBlockWriter:    newFilterWriter(w, filter.NewFilterGenerator(defaultFilterBitsPerKey)),
+		metaIndexBlockWriter: newBlockWriter(defaultMetaBlockRestartInterval, bPool, size),
+		dataIndexBlockWriter: newBlockWriter(defaultIndexBlockRestartInterval, bPool, size),
+	}
+	return writer
 }
 
 // Append 将内容写入到sstable
@@ -192,9 +238,16 @@ func (w *Writer) Append(key, value []byte) {
 
 // Close 关闭实现
 // 暂且默认布隆过滤器是打开的, 因为显著提高性能
-func (w *Writer) Close() error {
+func (w *Writer) Close() (err error) {
 
-	var err error
+	defer func() {
+		if err == nil {
+			w.dataBlockWriter.Close()
+			w.filterBlockWriter.Close()
+			w.metaIndexBlockWriter.Close()
+			w.dataIndexBlockWriter.Close()
+		}
+	}()
 
 	// 如果data block还有没写入到设备块的, 那么写入到设备块
 	if w.dataBlockWriter.buffer.Len() > 0 {
@@ -321,6 +374,11 @@ func (w *Writer) getIndexKey(a, b []byte) []byte {
 		separator = getSeparator(a, b)
 	}
 	return separator
+}
+
+// BytesLen 获取writer写的字节大小
+func (w *Writer) BytesLen() uint64 {
+	return w.offset
 }
 
 /**

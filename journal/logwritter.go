@@ -6,8 +6,8 @@ import (
 	"io"
 )
 
-type flusher interface {
-	flush() error
+type Syncer interface {
+	Sync() error
 }
 
 // Writer log record
@@ -15,7 +15,16 @@ type Writer struct {
 	writer      io.Writer
 	blockOffset int             // 当前的offset
 	buf         [blockSize]byte //待写入的缓冲区
-	f           flusher
+	syncer      Syncer
+	len         int
+}
+
+func NewWriter(writer io.Writer) *Writer {
+	syncer, _ := writer.(Syncer)
+	return &Writer{
+		writer: writer,
+		syncer: syncer,
+	}
 }
 
 // Write 写入一个chunk到journal中
@@ -101,9 +110,13 @@ func (w *Writer) writeBlock(length int) (int, error) {
 	if err != nil {
 		return n, err
 	}
-	if w.f != nil {
-		err = w.f.flush()
+	if w.syncer != nil {
+		err = w.syncer.Sync()
 	}
-
+	w.len += n
 	return n, err
+}
+
+func (w *Writer) BytesLen() int {
+	return w.len
 }

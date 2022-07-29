@@ -2,14 +2,13 @@ package utils
 
 import (
 	"math/rand"
-	"myleveldb/comparer"
 	"testing"
 )
 
 func TestMergeSort(t *testing.T) {
 	type args struct {
 		arr []interface{}
-		cmp comparer.Compare
+		cmp Compare
 	}
 	tests := []struct {
 		name string

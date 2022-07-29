@@ -15,7 +15,7 @@ r := &Reader{
 
 for {
 
-	reader, err := r.SeekNextRecord()
+	reader, err := r.SeekNextChunk()
 	if err == io.EOF {
 		break
 	}
@@ -126,6 +126,39 @@ func (r *Reader) readRecord(firstPartOfChunk bool) error {
 		}
 		r.i, r.j, r.n = 0, 0, n
 	}
+}
+
+func (r *chunkReader) ReadByte() (byte, error) {
+
+	reader := r.r
+
+	if reader.i != reader.j {
+		c := reader.buf[reader.i]
+		reader.i++
+		return c, nil
+	}
+
+	for {
+
+		if reader.last {
+			return 0, io.EOF
+		}
+
+		err := reader.readRecord(false)
+
+		if err == ErrSkipped {
+			return 0, io.ErrUnexpectedEOF
+		}
+
+		if err != nil {
+			return 0, err
+		}
+
+		c := reader.buf[reader.i]
+		reader.i++
+		return c, nil
+	}
+
 }
 
 // 使用ioutil.ReadAll(r), 便可把整个chunk的内容吐出

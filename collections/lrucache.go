@@ -9,6 +9,7 @@ import (
 	"errors"
 	"hash"
 	"hash/fnv"
+	"myleveldb/utils"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -108,6 +109,7 @@ type mBucket struct {
 	overflow          uint32 // 全局bucket超限叠加的数量
 	growThreshold     uint32 // 全局扩容的节点上限
 	shrinkThreshold   uint32 // 全局缩容的节点下限
+	resizeInProgress  uint32
 }
 
 type lruMap struct {
@@ -267,7 +269,7 @@ func (m *lruMap) get(namespace, hash uint32, key []byte, createOnNotExists bool)
 		}
 
 		// 如果需要扩容的话
-		if grow {
+		if grow && atomic.CompareAndSwapUint32(&mb.resizeInProgress, 0, 1) {
 			slots := mb.slots << 1
 			pred := unsafe.Pointer(mb)
 			growMBucket := &mBucket{
@@ -279,7 +281,7 @@ func (m *lruMap) get(namespace, hash uint32, key []byte, createOnNotExists bool)
 				shrinkThreshold:   mb.growThreshold,
 			}
 			if atomic.CompareAndSwapPointer(&m.mBucket, pred, unsafe.Pointer(growMBucket)) {
-				growMBucket.allocateBuckets()
+				go growMBucket.allocateBuckets()
 			}
 		}
 
@@ -301,37 +303,51 @@ func (m *lruMap) delete(namespace, hash uint32, key []byte) {
 		}
 
 		idx, evicted := bucket.lookUp(hash, namespace, key)
-		if evicted != nil {
+
+		if evicted == nil {
+			bucket.rwLock.Unlock()
+			return
+		}
+
+		if bytes.Compare(evicted.key, key) == 0 && evicted.hash == hash {
+
 			bucket.nodes = append(bucket.nodes[:idx], bucket.nodes[idx+1:]...)
-		}
+			bucket.rwLock.Unlock()
 
-		bucket.rwLock.Unlock()
+			// 如果达到缩容的情况下, 需要判断是不是达到最低限度了
+			if atomic.AddInt32(&m.nodes, -1) < int32(mb.shrinkThreshold) &&
+				mb.shrinkThreshold > mInitBucketSlot*mBucketOverflow {
 
-		// 如果达到缩容的情况下, 需要判断是不是达到最低限度了
-		if atomic.AddInt32(&m.nodes, -1) < int32(mb.shrinkThreshold) &&
-			mb.shrinkThreshold > mInitBucketSlot*mBucketOverflow {
+				if atomic.CompareAndSwapUint32(&mb.resizeInProgress, 0, 1) {
 
-			resizeSlot := mb.slots >> 1
+					resizeSlot := mb.slots >> 1
 
-			resizeMb := &mBucket{
-				shardMask:         resizeSlot - 1,
-				slots:             resizeSlot,
-				growThreshold:     resizeSlot * mBucketOverflow,
-				shrinkThreshold:   resizeSlot * mBucketOverflow >> 1,
-				inProgressMBucket: unsafe.Pointer(mb),
-				buckets:           make([]unsafe.Pointer, resizeSlot),
+					resizeMb := &mBucket{
+						shardMask:         resizeSlot - 1,
+						slots:             resizeSlot,
+						growThreshold:     resizeSlot * mBucketOverflow,
+						shrinkThreshold:   resizeSlot * mBucketOverflow >> 1,
+						inProgressMBucket: unsafe.Pointer(mb),
+						buckets:           make([]unsafe.Pointer, resizeSlot),
+					}
+
+					if atomic.CompareAndSwapPointer(&m.mBucket, unsafe.Pointer(mb), unsafe.Pointer(resizeMb)) {
+						go resizeMb.allocateBuckets()
+					}
+
+				}
 			}
 
-			if atomic.CompareAndSwapPointer(&m.mBucket, unsafe.Pointer(mb), unsafe.Pointer(resizeMb)) {
-				go resizeMb.allocateBuckets()
+			if rel, ok := evicted.Value().(utils.Releaser); ok {
+				rel.UnRef()
 			}
 
-		}
+			k, v, deleter := evicted.key, evicted.Value(), evicted.deleter
 
-		k, v, deleter := evicted.key, evicted.Value(), evicted.deleter
+			if deleter != nil {
+				deleter(k, v)
+			}
 
-		if deleter != nil {
-			deleter(k, v)
 		}
 
 		return

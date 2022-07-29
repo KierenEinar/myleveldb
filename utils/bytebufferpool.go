@@ -38,6 +38,22 @@ const (
 
 var defaultPool ByteBufferPool
 
+var namespacePool sync.Map
+
+// GetPoolNamespace 通过namespace 获取bytesbuffer
+func GetPoolNamespace(namespace string) *bytes.Buffer {
+	pool, _ := namespacePool.LoadOrStore(namespace, &ByteBufferPool{})
+	p := pool.(*ByteBufferPool)
+	return p.Get()
+}
+
+// PutPoolNamespace 通过namespace 写入pool
+func PutPoolNamespace(namespace string, buf *bytes.Buffer) {
+	pool, _ := namespacePool.LoadOrStore(namespace, &ByteBufferPool{})
+	p := pool.(*ByteBufferPool)
+	p.Put(buf)
+}
+
 // Get 获取buffer
 func Get() *bytes.Buffer {
 	return defaultPool.Get()

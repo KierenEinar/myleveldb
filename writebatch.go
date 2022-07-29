@@ -2,12 +2,9 @@ package myleveldb
 
 import (
 	"bytes"
-	"errors"
+	error2 "myleveldb/error"
+	"myleveldb/memdb"
 	"sync"
-)
-
-var (
-	ErrClosed = errors.New("err closed")
 )
 
 var (
@@ -19,6 +16,11 @@ var (
 		},
 	}
 )
+
+type WithBatch struct {
+	makeRoomForWrite func(n int) (*memdb.MemDB, int, error)
+	writeBatch       func(b *Batch, memDb *memdb.MemDB, mdbFree int) error
+}
 
 func getWriteBatch() *Batch {
 	return writeBatchPool.Get().(*Batch)
@@ -55,7 +57,7 @@ type writeMerge struct {
 }
 
 // Put 写入单条记录, 支持并发合并写
-func (wb *WriteMerge) Put(kt keyType, key, value []byte, withBatch func(*Batch) error) error {
+func (wb *WriteMerge) Put(kt keyType, key, value []byte, withBatch *WithBatch) error {
 
 	select {
 
@@ -65,7 +67,7 @@ func (wb *WriteMerge) Put(kt keyType, key, value []byte, withBatch func(*Batch) 
 		}
 
 	case <-wb.closedC:
-		return ErrClosed
+		return error2.ErrClosed
 
 	case wb.writeLock <- struct{}{}: // 拿到写锁
 
@@ -76,22 +78,34 @@ func (wb *WriteMerge) Put(kt keyType, key, value []byte, withBatch func(*Batch) 
 	return wb.writeLocked(batch, withBatch)
 }
 
-func (wm *WriteMerge) writeLocked(batch *Batch, withBatch func(*Batch) error) error {
+func (wm *WriteMerge) writeLocked(batch *Batch, withBatch *WithBatch) error {
 
 	if withBatch == nil {
 		panic("withBatch cb 不能为空")
 	}
 
+	mdb, mdbFree, err := withBatch.makeRoomForWrite(batch.internalLen)
+	if err != nil {
+		return err
+	}
+	defer mdb.UnRef()
+
 	var (
 		mergeLimit int
 		overflow   bool
 		merged     int
+		mergeCap   int
 	)
 
 	if batch.internalLen > 128<<10 {
-		mergeLimit = 1024<<10 - batch.internalLen
+		mergeLimit = 1024<<10 - batch.internalLen // 1m
 	} else {
-		mergeLimit = 128<<10 - batch.internalLen
+		mergeLimit = 128<<10 - batch.internalLen //  128k
+	}
+
+	mergeCap = mdbFree - batch.internalLen
+	if mergeLimit > mergeCap {
+		mergeLimit = mergeCap
 	}
 
 merge:
@@ -121,7 +135,7 @@ merge:
 
 	defer putWriteBatch(batch)
 
-	if err := withBatch(batch); err != nil {
+	if err := withBatch.writeBatch(batch, mdb, mdbFree); err != nil {
 		return wm.unLockWrite(overflow, merged, err)
 	}
 
