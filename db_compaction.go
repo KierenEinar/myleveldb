@@ -16,9 +16,7 @@ type cAuto struct {
 }
 
 func (c cAuto) Ack(err error) {
-	if c.err != nil {
-		c.err <- err
-	}
+	c.err <- err
 }
 
 func (db *DB) mCompaction() {
@@ -168,4 +166,119 @@ func (db *DB) dropFrozenMemDb() {
 	db.frozenMemDb.UnRef()
 	db.frozenMemDb = nil
 	db.frozenJournalFd = storage.FileDesc{}
+}
+
+func (db *DB) tableAutoCompaction() {
+	if c := db.s.pickCompaction(); c != nil {
+		db.tableCompaction(c)
+	}
+}
+
+func (db *DB) tableCompaction(c *Compaction) error {
+
+	var (
+		lastUKey     []byte
+		hashLastUKey bool
+		lastSeq      uint64
+		tw           *tWriter
+		sr           SessionRecord
+		dropped      bool
+	)
+
+	// 如果input跟合并层不存在重复的话(意味着level[1]=nil), 并且跟合并层的下一层(gp)不超过默认(10)个文件的时候,
+	// 那么可以直接将input层放到compaction层
+	if c.trivial() {
+		for _, t0 := range c.levels[0] {
+			sr.addTableFile(c.sourceLevel+1, t0)
+			sr.delTableFile(c.sourceLevel, t0)
+		}
+		if err := c.s.commit(&sr); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	iter := c.newIterator(db.s.tableOpts)
+	defer iter.UnRef()
+
+	seq := db.minSeq() // 获取db当前正在被使用的最小seq(如果存在快照, 那么取快照头部(最老旧)的seq, 不存在则取当前seq)
+
+	for iter.Next() {
+		iKey := iter.Key()
+
+		ukey, uSeq, kType, err := parseInternalKey(iKey)
+
+		if err == nil {
+
+			/*
+				需要判断如果加上当前ukey, 跟gp的重叠过多, 那么需要暂停之前的合并, 并把之前的合并直接写到.ldb文件, 再开一个新的.ldb文件
+			*/
+			if !hashLastUKey || db.s.icmp.uCompare(ukey, lastUKey) != 0 { // ukey首次合并写入
+				shouldStop := c.shouldStopBefore(ukey)
+
+				if tw == nil {
+					if tw, err = db.s.tableOpts.create(0); err != nil {
+						return err
+					}
+				}
+
+				// 如果要写入的文件跟sstable
+				if shouldStop || tw.tableWriter.BytesLen() >= uint64(db.s.GetTableFileSize()) {
+					tf, err := tw.finish()
+					if err != nil {
+						return err
+					}
+					sr.addTableFile(c.sourceLevel+1, *tf)
+					tw = nil
+					c.restore()
+				}
+				hashLastUKey = true
+				lastUKey = ukey
+				lastSeq = maxSeq
+			}
+
+			/**
+				重新调整的规则
+
+				/-------------------------------------------------------------------------/
+																	|
+			 													  minseq
+				1. 如果当前ukey是首次compact
+					*. 如果seq>=minseq, 那么直接保存到.ldb文件
+				    *. 否则, 普通设置的话直接保存到.ldb文件, 删除见第三点说明
+			    2. 如果当前ukey非首次compact
+					*. 如果seq>=minseq, 那么直接保存到.ldb文件
+					*. 否则, 直接丢弃
+			    3. 如果当前level和level+1存在seq小于等于minseq并且是删除行为, 需要判断level+2直到最高层存不存在该key,
+				   如果存在的话则不能删除, 否则会造成本来已经删除的key, 反而能被搜索到
+
+			**/
+			if lastSeq <= seq {
+				dropped = true
+			} else if kType == keyTypeDel && uSeq <= seq && c.isBaseLevelForKey(ukey) {
+				dropped = true
+			}
+			lastSeq = seq
+
+			if !dropped {
+				if tw == nil {
+					if tw, err = db.s.tableOpts.create(0); err != nil {
+						return err
+					}
+				}
+				tw.append(iKey, iter.Value())
+			}
+		}
+
+	}
+
+	if tw != nil {
+		if tf, err := tw.finish(); err != nil {
+			return err
+		} else {
+			sr.addTableFile(c.sourceLevel+1, *tf)
+		}
+	}
+
+	return db.s.commit(&sr)
 }

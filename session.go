@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"myleveldb/comparer"
 	error2 "myleveldb/error"
 	"myleveldb/journal"
 	"myleveldb/memdb"
@@ -30,7 +29,7 @@ type Session struct {
 	stor storage.Storage // 存储
 	vmu  sync.Mutex
 
-	icmp comparer.BasicComparer
+	icmp *iComparer
 
 	// version 相关(mvcc)
 	stVersion   *Version // 当前正在使用的版本
@@ -55,6 +54,8 @@ type Session struct {
 
 	// 选项
 	*Options
+
+	compactPtrs []internalKey // 每一个level被compact的最大值
 }
 
 // 打开存储, 获得session
@@ -333,7 +334,7 @@ func (s *Session) flushMemDb(rec *SessionRecord, memDB *memdb.MemDB) error {
 		return err
 	}
 
-	rec.addTableFile(0, tFile)
+	rec.addTableFile(0, *tFile)
 
 	return nil
 }

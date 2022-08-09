@@ -12,6 +12,11 @@ type Version struct {
 	levels   []tFiles // 每一层的sstable文件描述符
 	session  *Session
 	released bool
+
+	// compaction 相关
+	cScore int // compaction计算分数, 分数大于等于1即可开始compaction
+	cLevel int // compaction level
+
 }
 
 func (ver *Version) newVersionStaging() *VersionStaging {
@@ -180,6 +185,7 @@ func (vs *VersionStaging) finish() *Version {
 
 	}
 	n := levelNum
+	// 裁剪
 	for ; n > 0 && len(newLevels[n-1]) == 0; n-- {
 
 	}
@@ -213,7 +219,7 @@ func (v *Version) fillRecord(s *SessionRecord) {
 	s.resetAddRecord()
 	for idx, level := range v.levels {
 		for j := range level {
-			s.addTableFile(idx, &level[j])
+			s.addTableFile(idx, level[j])
 		}
 	}
 }

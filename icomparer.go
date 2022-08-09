@@ -22,3 +22,7 @@ func (ic iComparer) Compare(a, b []byte) int {
 	}
 	return r
 }
+
+func (ic iComparer) uCompare(a, b []byte) int {
+	return ic.ucmp.Compare(a, b)
+}

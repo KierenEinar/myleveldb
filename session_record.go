@@ -232,16 +232,24 @@ func (p *SessionRecord) addRecord(record atRecord) {
 	p.atRecords = append(p.atRecords, record)
 }
 
-func (p *SessionRecord) addTableFile(level int, file *tFile) *atRecord {
+func (p *SessionRecord) addTableFile(level int, file tFile) {
 
-	return &atRecord{
+	at := atRecord{
 		level: level,
 		num:   file.fd.Num,
 		size:  int(file.size),
 		min:   file.min,
 		max:   file.max,
 	}
+	p.addRecord(at)
+}
 
+func (p *SessionRecord) delTableFile(level int, file tFile) {
+	dl := dlRecord{
+		level: level,
+		num:   file.fd.Num,
+	}
+	p.delRecord(dl)
 }
 
 func (p *SessionRecord) hasField(rec int) bool {

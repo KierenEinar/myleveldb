@@ -20,6 +20,18 @@ type tFile struct {
 	min, max internalKey
 }
 
+func (t tFile) overlapped(icmp *iComparer, umin, umax []byte) bool {
+	return !t.after(icmp, umax) && !t.before(icmp, umin)
+}
+
+func (t tFile) after(icmp *iComparer, umax []byte) bool {
+	return icmp.uCompare(t.min.uKey(), umax) > 0
+}
+
+func (t tFile) before(icmp *iComparer, umin []byte) bool {
+	return icmp.uCompare(t.max.uKey(), umin) < 0
+}
+
 type tFiles []tFile
 
 func (tf tFiles) sortByNum() {
@@ -36,6 +48,128 @@ func (tf tFiles) sortByKey(icmp comparer.BasicComparer) {
 
 }
 
+func (tf tFiles) getRange(icmp comparer.BasicComparer) (imin, imax internalKey) {
+	i := 0
+	for i < len(tf) {
+		if icmp.Compare(tf[i].min, imin) < 0 {
+			imin = tf[i].min
+		}
+		if icmp.Compare(tf[i].max, imax) > 0 {
+			imax = tf[i].max
+		}
+	}
+	return
+}
+
+func (tf tFiles) getOverlaps(icmp *iComparer, umin, umax []byte, overlapped bool) tFiles {
+
+	var dst tFiles
+
+	if len(tf) == 0 {
+		return dst
+	}
+
+	if overlapped {
+		i := 0
+		for ; i < len(tf); i++ {
+			t := tf[i]
+			if t.overlapped(icmp, umin, umax) {
+				reLoop := false
+				if icmp.uCompare(t.min.uKey(), umin) < 0 {
+					umin = t.min.uKey()
+					i = 0
+					reLoop = true
+				}
+				if icmp.uCompare(t.max.uKey(), umax) > 0 {
+					umax = t.max.uKey()
+					i = 0
+					reLoop = true
+				}
+				if reLoop {
+					dst = dst[:0]
+					continue
+				}
+				dst = append(dst, t)
+			}
+		}
+
+	} else { // 处理非0层的情况
+
+		/**
+					    umin									    umax
+		范围				/-------------------------------------------/
+
+		真实sstable:
+
+		e.g.1		/------/                /--------/					/-------/
+
+
+		e.g.2       /------/											/-------/
+
+
+		e.g.3	    /------/			/--------/		/-----/	/---------/
+
+
+		e.g.4	/---/
+
+
+		e.g.5																/---/	/------/
+
+
+		e.g.6				/---------------------------/
+
+				**/
+
+		var begin, end int
+		n := len(tf)
+		// 所有sstable文件的key范围不会重叠, 所以可以使用二分查找
+		// 首先定位sstable第一个min在umin之后的, 如果它的上一个sstable的max仍在umin之后, 那也要算进来
+		idx := sort.Search(n, func(i int) bool {
+			return icmp.uCompare(tf[i].min, umin) > 0
+		})
+
+		if idx == 0 || idx == n {
+			begin = idx
+		} else if icmp.uCompare(tf[idx-1].min.uKey(), umin) >= 0 {
+			begin = idx - 1
+		} else {
+			begin = idx
+		}
+
+		// 再定位sstable第一个max在umax之后的
+
+		idx = sort.Search(n, func(i int) bool {
+			return icmp.uCompare(tf[i].max, umax) > 0
+		})
+
+		// 说明所有的sstable文件中不存在max大于umax的文件
+		if idx == n {
+			end = idx
+		} else if icmp.uCompare(tf[idx].min, umin) <= 0 {
+			end = idx + 1 // 因为golang的切片不包括index, 所以需要做+1操作
+		} else {
+			end = idx
+		}
+
+		if end-begin <= 0 {
+			return dst
+		}
+
+		dst = make(tFiles, end-begin)
+		copy(dst, tf[begin:end])
+	}
+
+	return dst
+
+}
+
+func (tf tFiles) size() (s int64) {
+	for _, v := range tf {
+		s += v.size
+	}
+	return
+}
+
 func (tf tFiles) NewIteratorIndexer(top *sstableOperation) iter.IteratorIndexer {
 	return iter.NewArrayIndexer(&tFileArrayIndexer{
 		tfs: tf,
@@ -44,8 +178,9 @@ func (tf tFiles) NewIteratorIndexer(top *sstableOperation) iter.IteratorIndexer 
 }
 
 type tFileArrayIndexer struct {
-	tfs tFiles
-	top *sstableOperation
+	tfs  tFiles
+	top  *sstableOperation
+	icmp comparer.BasicComparer
 }
 
 func (ti tFileArrayIndexer) Len() int {
@@ -61,7 +196,10 @@ func (ti tFileArrayIndexer) Get(i int) iter.Iterator {
 }
 
 func (ti tFileArrayIndexer) Search(key []byte) int {
-	return 0
+	n := len(ti.tfs)
+	return sort.Search(n, func(i int) bool {
+		return ti.icmp.Compare(ti.tfs[i].max, internalKey(key)) >= 0
+	})
 }
 
 // sstableOperation sstable 相关操作封装

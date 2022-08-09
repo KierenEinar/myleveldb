@@ -150,13 +150,13 @@ func (s *Session) refLoop() {
 		for {
 			// 如果release存在该版本, 那么跳出到releaseProcess即可
 			if _, ok := releasedRef[next]; ok {
-				break
+				goto releaseUnRef
 			}
 
 			// 如果ref不存在, 那么有可能是已经被referenced或者next是最后
 			ver, ok := versionRef[next]
 			if !ok {
-				break
+				return
 			}
 
 			// 如果当前版本引用没有超过最大的cache数量并且当前版本引用
@@ -183,6 +183,7 @@ func (s *Session) refLoop() {
 			next += 1
 		}
 
+	releaseUnRef:
 		// 析构的版本引用转文件引用
 		for {
 			if delta, ok := releasedRef[next]; ok {

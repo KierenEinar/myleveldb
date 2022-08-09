@@ -22,7 +22,7 @@ var minHeapIntComparable = func(array *[]interface{}, i, j int) bool {
 
 func TestMaxHeap(t *testing.T) {
 
-	heap := Init(maxHeapIntComparable)
+	heap := InitHeap(maxHeapIntComparable)
 
 	s := rand.NewSource(time.Now().Unix())
 
@@ -37,7 +37,7 @@ func TestMaxHeap(t *testing.T) {
 
 func TestMinHeap(t *testing.T) {
 
-	heap := Init(minHeapIntComparable)
+	heap := InitHeap(minHeapIntComparable)
 
 	s := rand.NewSource(time.Now().Unix())
 

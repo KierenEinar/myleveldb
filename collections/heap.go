@@ -8,7 +8,7 @@ type Heap struct {
 	lastOffset int
 }
 
-func Init(l Less) *Heap {
+func InitHeap(l Less) *Heap {
 	return &Heap{
 		Less:       l,
 		array:      make([]interface{}, 1), // 创建一个index=0是空的数组

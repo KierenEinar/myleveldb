@@ -169,7 +169,7 @@ func NewMergedIterator(iters []Iterator) Iterator {
 		soi:   true,
 		keys:  make([][]byte, len(iters)),
 	}
-	iter.heap = collections.Init(iter.heapLess)
+	iter.heap = collections.InitHeap(iter.heapLess)
 	return iter
 }
 

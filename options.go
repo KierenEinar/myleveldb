@@ -9,6 +9,20 @@ const (
 	writerEnable                      = true
 	defaultMemDbWriterBuffer          = 1 << 22 // 4m
 	defaultSStableDataBlockSize int64 = 1 << 11 // 2k
+	defaultSStableFileSize            = 1 << 11 // 2m
+
+	// 默认当要扩大输入文件时, 一次性总共不能超过25个文件进行合并
+	defaultCompactionLimitFiles = 25
+
+	// 写入的时候进行检查, 如果level0层的sstable文件数量达到此值, 需要做一次休眠一微秒的操作
+	defaultSlowDownTrigger = 8
+
+	// 写入的时候进行检查, 如果level0成的sstable文件数量达到此值, 需要直接做compaction操作
+	defaultPauseTrigger = 12
+
+	// 默认当level[0]跟level[1]无重复, 并且level[0]跟gp层重复的文件数量不超过该值, 则可以直接将
+	// level[0]直接放置到level[1]
+	defaultTrivialGpLimitFiles = 10
 )
 
 // Options db相关的选项
@@ -51,4 +65,16 @@ func (opt *Options) GetCompare() comparer.BasicComparer {
 	}
 
 	return opt.Cmp
+}
+
+func (opt *Options) GetCompactionLimit() int64 {
+	return defaultCompactionLimitFiles * defaultSStableFileSize
+}
+
+func (opt *Options) GetCompactionTrivialGpFiles() int {
+	return defaultTrivialGpLimitFiles
+}
+
+func (opt *Options) GetTableFileSize() int {
+	return defaultSStableFileSize
 }

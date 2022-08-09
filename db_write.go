@@ -16,10 +16,7 @@ import (
 
 **/
 
-const (
-	defaultSlowDownTrigger = 8
-	defaultPauseTrigger    = 12
-)
+const ()
 
 // n 是要写入的长度
 func (db *DB) makeRoomForWrite(n int) (memDb *memdb.MemDB, mdbFree int, err error) {
