@@ -198,6 +198,12 @@ func (db *DB) tableCompaction(c *Compaction) error {
 		return nil
 	}
 
+	for i, tables := range c.levels {
+		for _, table := range tables {
+			sr.delTableFile(c.sourceLevel+i, table) // 对需要合并的文件全部置为删除
+		}
+	}
+
 	iter := c.newIterator(db.s.tableOpts)
 	defer iter.UnRef()
 

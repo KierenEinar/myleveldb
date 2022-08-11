@@ -221,13 +221,14 @@ func (c *Compaction) isBaseLevelForKey(ukey []byte) bool {
 		ptr := c.levelPtrs[level]
 		l := c.v.levels[level]
 		for ptr < len(l) {
-			if c.s.icmp.uCompare(l[ptr].max.uKey(), ukey) >= 0 &&
-				c.s.icmp.uCompare(l[ptr].min.uKey(), ukey) <= 0 { // 存在重叠, 不能自增, 因为下一个key可能也重叠
-				return false
+			if c.s.icmp.uCompare(l[ptr].max.uKey(), ukey) >= 0 {
+				if c.s.icmp.uCompare(l[ptr].min.uKey(), ukey) <= 0 { // 存在重叠, 不能自增, 因为下一个key可能也重叠
+					return false
+				}
+				break
 			}
-			break
+			c.levelPtrs[level]++ // 不存在重叠, 下一个也绝对不会重叠, 因此可以自增
 		}
-		c.levelPtrs[level]++ // 不存在重叠, 下一个也绝对不会重叠, 因此可以自增
 	}
 	return true
 }
