@@ -168,10 +168,11 @@ func (db *DB) dropFrozenMemDb() {
 	db.frozenJournalFd = storage.FileDesc{}
 }
 
-func (db *DB) tableAutoCompaction() {
+func (db *DB) tableAutoCompaction() error {
 	if c := db.s.pickCompaction(); c != nil {
-		db.tableCompaction(c)
+		return db.tableCompaction(c)
 	}
+	return nil
 }
 
 func (db *DB) tableCompaction(c *Compaction) error {
@@ -184,6 +185,8 @@ func (db *DB) tableCompaction(c *Compaction) error {
 		sr           SessionRecord
 		dropped      bool
 	)
+
+	defer c.UnRef()
 
 	// 如果input跟合并层不存在重复的话(意味着level[1]=nil), 并且跟合并层的下一层(gp)不超过默认(10)个文件的时候,
 	// 那么可以直接将input层放到compaction层
@@ -239,7 +242,7 @@ func (db *DB) tableCompaction(c *Compaction) error {
 					c.restore()
 				}
 				hashLastUKey = true
-				lastUKey = ukey
+				lastUKey = append(lastUKey[:0], ukey...)
 				lastSeq = maxSeq
 			}
 
@@ -272,6 +275,9 @@ func (db *DB) tableCompaction(c *Compaction) error {
 						return err
 					}
 				}
+
+				// 检查需不需要暂停写入
+				db.pauseCompaction()
 				tw.append(iKey, iter.Value())
 			}
 		}
@@ -287,4 +293,22 @@ func (db *DB) tableCompaction(c *Compaction) error {
 	}
 
 	return db.s.commit(&sr)
+}
+
+func (db *DB) pauseCompaction() {
+
+	var pauseCmd <-chan struct{}
+
+	select {
+	case pauseCmd = <-db.tPauseCmdC:
+	default:
+		return
+	}
+
+	select {
+	case <-pauseCmd:
+	case <-db.closeC:
+		return
+	}
+
 }

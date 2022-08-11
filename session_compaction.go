@@ -232,3 +232,7 @@ func (c *Compaction) isBaseLevelForKey(ukey []byte) bool {
 	}
 	return true
 }
+
+func (c *Compaction) UnRef() {
+	c.v.unRef()
+}
