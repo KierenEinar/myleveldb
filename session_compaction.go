@@ -181,22 +181,26 @@ func (c *Compaction) trivial() bool {
 	return false
 }
 
-func (c *Compaction) shouldStopBefore(ukey []byte) bool {
+func (c *Compaction) shouldStopBefore(ikey internalKey) bool {
 
 	/**
 		如果当前ukey跟gp重复的超过限制
 
-				/---------------/----------------/------------------/
-														|ikey
-		/------------/------/-------/----------------/--------/----------/
+				/---------------/     /----------------/      /------------------/
+																	   |ikey
+		/------------/     /------/      /-------/      /----------------/     /--------/      /----------/
 
 	**/
-	for i := c.gpi; i < len(c.gp); i++ {
-		if !c.gp[i].after(c.s.icmp, ukey) {
+	for ; c.gpi < len(c.gp); c.gpi++ {
+		gp := c.gp[c.gpi]
+		// 说明当前key正好跟下一层的重叠又产生一个
+		if c.s.icmp.Compare(ikey, gp.max) > 0 {
+			if c.seenKey {
+				c.gpOverlappedBytes += c.gp[c.gpi].size
+			}
+
+		} else {
 			break
-		}
-		if c.seenKey {
-			c.gpOverlappedBytes += c.gp[i].size
 		}
 	}
 

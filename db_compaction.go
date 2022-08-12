@@ -76,15 +76,6 @@ func (db *DB) memCompaction() error {
 	// 在memcompaction期间, 需要暂停其他正在执行的table compaction
 	resumeC := make(chan struct{})
 
-	defer func() {
-		if resumeC != nil {
-			select {
-			case <-resumeC:
-				close(resumeC)
-			}
-		}
-	}()
-
 	select {
 	case db.tPauseCmdC <- resumeC:
 	case <-db.closeC:
@@ -116,6 +107,16 @@ func (db *DB) memCompaction() error {
 
 	// 将frozenmemdb 删掉
 	db.dropFrozenMemDb()
+
+	if resumeC != nil {
+		select {
+		case resumeC <- struct{}{}:
+			close(resumeC)
+		}
+	}
+
+	// memcompaction后通知开启一次table compaction
+	db.compTrigger(db.tcompCmdC)
 
 	return nil
 

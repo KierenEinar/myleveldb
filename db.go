@@ -35,7 +35,7 @@ type DB struct {
 	// compaction相关
 	mcompCmdC  chan cCmd
 	tcompCmdC  chan cCmd
-	tPauseCmdC chan chan struct{} // 正在执行compaction的暂停指令
+	tPauseCmdC chan chan<- struct{} // 正在执行compaction的暂停指令
 
 	closeC chan struct{}
 }
@@ -85,7 +85,7 @@ func openDB(s *Session) (*DB, error) {
 		writeMerge: NewWriteMerge(),
 		mcompCmdC:  make(chan cCmd),
 		tcompCmdC:  make(chan cCmd),
-		tPauseCmdC: make(chan chan struct{}),
+		tPauseCmdC: make(chan chan<- struct{}),
 	}
 
 	db.withBatch = &WithBatch{
