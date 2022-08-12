@@ -224,7 +224,7 @@ func (db *DB) tableCompaction(c *Compaction) error {
 				需要判断如果加上当前ukey, 跟gp的重叠过多, 那么需要暂停之前的合并, 并把之前的合并直接写到.ldb文件, 再开一个新的.ldb文件
 			*/
 			if !hashLastUKey || db.s.icmp.uCompare(ukey, lastUKey) != 0 { // ukey首次合并写入
-				shouldStop := c.shouldStopBefore(ukey)
+				shouldStop := c.shouldStopBefore(iKey)
 
 				if tw == nil {
 					if tw, err = db.s.tableOpts.create(0); err != nil {
