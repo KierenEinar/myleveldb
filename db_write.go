@@ -119,10 +119,6 @@ func (db *DB) compTrigger(cmd chan<- cCmd) error {
 	return nil
 }
 
-func (db *DB) Put(key, value []byte) error {
-	return db.putRec(key, value, keyTypeVal)
-}
-
 func (db *DB) putRec(key, value []byte, kt keyType) error {
 	return db.writeMerge.Put(kt, key, value, db.withBatch)
 }

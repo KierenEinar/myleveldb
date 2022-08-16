@@ -311,3 +311,23 @@ func (sstOpt *sstableOperation) NewIterator(t tFile) iter.Iterator {
 	iterator.SetReleaser(ch)
 	return iterator
 }
+
+func (sstOpt *sstableOperation) Find(t tFile, ikey internalKey) (rkey internalKey, value []byte, err error) {
+	ch, err := sstOpt.open(t)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer ch.UnRef()
+	reader := ch.Value().(*sstable.Reader)
+	return reader.Find(ikey)
+}
+
+func (sstOpt *sstableOperation) FindKey(t tFile, ikey internalKey) (rkey internalKey, err error) {
+	ch, err := sstOpt.open(t)
+	if err != nil {
+		return nil, err
+	}
+	defer ch.UnRef()
+	reader := ch.Value().(*sstable.Reader)
+	return reader.FindKey(ikey)
+}

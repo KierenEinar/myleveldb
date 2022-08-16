@@ -479,13 +479,13 @@ func (r *Reader) find(key []byte, filtered, noValue bool) (rkey []byte, rvalue [
 
 // FindKey 搜寻sstable中>=key的最小key
 func (r *Reader) FindKey(key []byte) (rkey []byte, err error) {
-	rkey, _, err = r.find(key, false, false)
+	rkey, _, err = r.find(key, true, false)
 	return
 }
 
 // Find 搜寻sstable中>=key的最小key value pair
 func (r *Reader) Find(key []byte) (rkey []byte, value []byte, err error) {
-	rkey, value, err = r.find(key, false, false)
+	rkey, value, err = r.find(key, true, false)
 	return
 }
 

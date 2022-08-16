@@ -1,7 +1,9 @@
 package myleveldb
 
 import (
+	"myleveldb/sstable"
 	"myleveldb/storage"
+	"sort"
 	"sync/atomic"
 )
 
@@ -229,4 +231,125 @@ func (v *Version) tLen(level int) int {
 		return 0
 	}
 	return len(v.levels[level])
+}
+
+func (v *Version) get(ikey internalKey, noValue bool) (value []byte, err error) {
+
+	var (
+		// for level 0, since level 0 key can hop cross
+		zfound     = false
+		zkt        keyType
+		zkey, zval []byte
+		zseq       uint64
+	)
+
+	v.walkOverlapping(ikey, func(level int, tf tFile) bool {
+
+		var (
+			fkey internalKey
+			fval []byte
+		)
+
+		if noValue {
+			fkey, err = v.session.tableOpts.FindKey(tf, ikey)
+		} else {
+			fkey, fval, err = v.session.tableOpts.Find(tf, ikey)
+		}
+
+		if err != nil {
+			if err == sstable.ErrNotFound {
+				return true
+			}
+			return false
+		}
+
+		uk, seq, kt, err := parseInternalKey(fkey)
+
+		if err == nil {
+
+			if v.session.icmp.uCompare(uk, ikey.uKey()) != 0 {
+				return true
+			}
+
+			if level == 0 {
+				zfound = true
+				if seq >= zseq {
+					zseq = seq
+					zkey = uk
+					zval = fval
+					zkt = kt
+				}
+			} else {
+				if kt == keyTypeVal {
+					value = append([]byte(nil), fval...)
+					err = nil
+				} else if kt == keyTypeDel {
+					err = sstable.ErrNotFound
+				} else {
+					panic("myLeveldb/version get keytype invalid")
+				}
+				return false
+			}
+		}
+
+		return true
+
+	}, func() bool {
+
+		if zfound {
+
+			if zkt == keyTypeVal {
+				value = append([]byte(nil), zval...)
+				err = nil
+			} else if zkt == keyTypeDel {
+				err = sstable.ErrNotFound
+			} else {
+				panic("myLeveldb/version get keytype invalid")
+			}
+
+			return false
+		}
+
+		return true
+
+	})
+
+	return
+}
+
+func (v *Version) walkOverlapping(ikey internalKey, f func(level int, tf tFile) bool,
+	lf func() bool) {
+	ukey := ikey.uKey()
+	icmp := v.session.icmp
+	for level, tables := range v.levels {
+		if level == 0 {
+			for idx := range tables {
+				table := tables[idx]
+				if table.overlapped(icmp, ukey, ukey) {
+					if !f(level, table) {
+						return
+					}
+				}
+			}
+		} else {
+
+			idx := sort.Search(len(tables), func(i int) bool {
+				return icmp.Compare(tables[i].max, ikey) >= 0
+			})
+			if idx < len(tables) {
+				if icmp.uCompare(ukey, tables[idx].min.uKey()) >= 0 {
+					if !f(level, tables[idx]) {
+						return
+					}
+				}
+			}
+		}
+
+		if lf != nil && !lf() {
+			return
+		}
+
+	}
+	return
+
 }

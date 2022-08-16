@@ -1,6 +1,7 @@
 package myleveldb
 
 import (
+	"myleveldb/collections"
 	"myleveldb/journal"
 	"myleveldb/memdb"
 	"myleveldb/storage"
@@ -104,4 +105,89 @@ func openDB(s *Session) (*DB, error) {
 	go db.mCompaction()
 
 	return db, nil
+}
+
+func (db *DB) Put(key, value []byte) error {
+	return db.putRec(key, value, keyTypeVal)
+}
+
+func (db *DB) Delete(key []byte) error {
+	return db.putRec(key, nil, keyTypeDel)
+}
+
+func (db *DB) Get(key []byte) (value []byte, err error) {
+
+}
+
+func (db *DB) get(key []byte, seq uint64) (value []byte, err error) {
+
+	ikey := makeInternalKey(key, seq, keyTypeVal)
+
+	memDb, memFrozenDb := db.getMems()
+
+	defer func() {
+		if memDb != nil {
+			memDb.UnRef()
+		}
+
+		if memFrozenDb != nil {
+			memFrozenDb.UnRef()
+		}
+	}()
+
+	for _, m := range []*memdb.MemDB{memDb, memFrozenDb} {
+		if m == nil {
+			continue
+		}
+
+		if ok, v, e := memGet(m, ikey, db.s.icmp); ok {
+			return append([]byte(nil), v...), e
+		}
+	}
+
+	v := db.s.version()
+	defer v.unRef()
+
+}
+
+func (db *DB) getMems() (memDb *memdb.MemDB, memFrozenDb *memdb.MemDB) {
+
+	db.memMu.Lock()
+	defer db.memMu.Unlock()
+
+	if db.memDb != nil {
+		db.memDb.Ref()
+	}
+
+	if db.frozenMemDb != nil {
+		db.frozenMemDb.Ref()
+	}
+
+	return db.memDb, db.frozenMemDb
+}
+
+func memGet(mdb *memdb.MemDB, ikey internalKey, icmp *iComparer) (ok bool, value []byte, err error) {
+
+	value, err = mdb.FindGE(ikey)
+
+	if err == nil {
+
+		ukey, _, kt, kerr := parseInternalKey(ikey)
+		if kerr != nil {
+			panic(kerr)
+		}
+
+		if icmp.uCompare(ukey, ikey.uKey()) == 0 {
+			if kt == keyTypeDel {
+				return true, nil, collections.ErrNotFound
+			}
+			return true, value, nil
+		}
+
+	} else if err == collections.ErrNotFound {
+		return false, nil, nil
+	}
+
+	return false, nil, err
+
 }
