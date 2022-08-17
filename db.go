@@ -1,6 +1,7 @@
 package myleveldb
 
 import (
+	"container/list"
 	"myleveldb/collections"
 	"myleveldb/journal"
 	"myleveldb/memdb"
@@ -30,8 +31,13 @@ type DB struct {
 	frozenJournalFd storage.FileDesc
 	frozenSeq       uint64
 
+	// write相关
 	writeMerge *WriteMerge
 	withBatch  *WithBatch
+
+	// snapshot相关
+	snapMu   sync.Mutex
+	snapList *list.List
 
 	// compaction相关
 	mcompCmdC  chan cCmd
@@ -43,6 +49,10 @@ type DB struct {
 
 func (db *DB) addSeq(delta uint64) {
 	atomic.AddUint64(&db.seq, delta)
+}
+
+func (db *DB) loadSeq() uint64 {
+	return atomic.LoadUint64(&db.seq)
 }
 
 // Open 打开数据库
@@ -116,15 +126,14 @@ func (db *DB) Delete(key []byte) error {
 }
 
 func (db *DB) Get(key []byte) (value []byte, err error) {
-
+	snapshot := db.acquireSnapshot()
+	defer db.releaseSnapshot(snapshot)
+	return db.get(key, snapshot.seq)
 }
 
 func (db *DB) get(key []byte, seq uint64) (value []byte, err error) {
-
 	ikey := makeInternalKey(key, seq, keyTypeVal)
-
 	memDb, memFrozenDb := db.getMems()
-
 	defer func() {
 		if memDb != nil {
 			memDb.UnRef()
@@ -144,10 +153,9 @@ func (db *DB) get(key []byte, seq uint64) (value []byte, err error) {
 			return append([]byte(nil), v...), e
 		}
 	}
-
 	v := db.s.version()
 	defer v.unRef()
-
+	return v.get(ikey, false)
 }
 
 func (db *DB) getMems() (memDb *memdb.MemDB, memFrozenDb *memdb.MemDB) {
