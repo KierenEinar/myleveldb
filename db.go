@@ -219,3 +219,13 @@ func (db *DB) resumeWrite() bool {
 	return v.tLen(0) < db.s.Options.GetLevel0TriggerLen()
 
 }
+
+func (db *DB) minSeq() uint64 {
+	db.snapMu.Lock()
+	defer db.snapMu.Unlock()
+	if ele := db.snapList.Front(); ele != nil {
+		e := ele.Value.(*snapshotElement)
+		return e.seq
+	}
+	return db.loadSeq()
+}
