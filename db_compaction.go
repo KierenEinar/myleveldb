@@ -313,3 +313,8 @@ func (db *DB) pauseCompaction() {
 	}
 
 }
+
+// 接收外部信号, 进行sstable文件合并
+func (db *DB) tCompaction() {
+
+}

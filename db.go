@@ -114,6 +114,9 @@ func openDB(s *Session) (*DB, error) {
 	// 开启memdb compaction
 	go db.mCompaction()
 
+	// 开启table compaction
+	go db.tCompaction()
+
 	return db, nil
 }
 

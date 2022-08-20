@@ -16,8 +16,8 @@ type Version struct {
 	released bool
 
 	// compaction 相关
-	cScore int // compaction计算分数, 分数大于等于1即可开始compaction
-	cLevel int // compaction level
+	cScore float64 // compaction计算分数, 分数大于等于1即可开始compaction
+	cLevel int     // compaction level
 
 }
 
@@ -194,6 +194,10 @@ func (vs *VersionStaging) finish() *Version {
 
 	nv.levels = newLevels[:n]
 	vs.scratch = vs.scratch[:0]
+
+	// 推算下次compaction的最佳层
+	nv.computeCompaction()
+
 	return nv
 }
 
@@ -352,4 +356,32 @@ func (v *Version) walkOverlapping(ikey internalKey, f func(level int, tf tFile) 
 	}
 	return
 
+}
+
+func (v *Version) computeCompaction() {
+
+	var (
+		bestScore float64
+		bestLevel int
+	)
+
+	for level, tables := range v.levels {
+		var (
+			cScore float64
+			cLevel int
+		)
+		size := tables.size()
+		if level == 0 {
+			cScore = float64(len(tables)) / float64(v.session.Options.GetLevel0TriggerLen())
+		} else {
+			cScore = float64(size) / float64(v.session.Options.GetCompactionSizeLevel(level))
+		}
+		if cScore > bestScore {
+			bestScore = cScore
+			bestLevel = cLevel
+		}
+	}
+
+	v.cScore = bestScore
+	v.cLevel = bestLevel
 }

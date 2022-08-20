@@ -1,11 +1,14 @@
 package myleveldb
 
 import (
+	"math"
 	"myleveldb/comparer"
 	"myleveldb/utils"
 )
 
 const (
+	mb = 1 << 20
+
 	writerEnable                      = true
 	defaultMemDbWriterBuffer          = 1 << 22 // 4m
 	defaultSStableDataBlockSize int64 = 1 << 11 // 2k
@@ -23,6 +26,12 @@ const (
 	// 默认当level[0]跟level[1]无重复, 并且level[0]跟gp层重复的文件数量不超过该值, 则可以直接将
 	// level[0]直接放置到level[1]
 	defaultTrivialGpLimitFiles = 10
+
+	// 默认下一层是上一层size的10倍
+	defaultCompactionTotalSizeMulter = 10
+
+	// 默认基础层的总大小
+	defaultLevelTotalSize = 10 * mb
 )
 
 // Options db相关的选项
@@ -77,4 +86,13 @@ func (opt *Options) GetCompactionTrivialGpFiles() int {
 
 func (opt *Options) GetTableFileSize() int {
 	return defaultSStableFileSize
+}
+
+func (opt *Options) GetLevel0TriggerLen() int {
+	return defaultPauseTrigger
+}
+
+func (opt *Options) GetCompactionSizeLevel(level int) int64 {
+	multer := math.Pow(defaultCompactionTotalSizeMulter, float64(level))
+	return int64(multer) * defaultLevelTotalSize
 }
