@@ -5,6 +5,7 @@ import (
 	"myleveldb/storage"
 	"sort"
 	"sync/atomic"
+	"unsafe"
 )
 
 // Version 数据库某一时刻的状态
@@ -18,7 +19,7 @@ type Version struct {
 	// compaction 相关
 	cScore float64 // compaction计算分数, 分数大于等于1即可开始compaction
 	cLevel int     // compaction level
-
+	cSeek  *unsafe.Pointer
 }
 
 func (ver *Version) newVersionStaging() *VersionStaging {

@@ -117,7 +117,7 @@ const (
 )
 
 var (
-	ErrCorupted = errors.New("corupted content err")
+	ErrCorupted = errors.New("corupted content ack")
 )
 
 type Reader interface {

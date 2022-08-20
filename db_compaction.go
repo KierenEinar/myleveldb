@@ -12,11 +12,11 @@ type cCmd interface {
 }
 
 type cAuto struct {
-	err chan error
+	ack chan error
 }
 
 func (c cAuto) Ack(err error) {
-	c.err <- err
+	c.ack <- err
 }
 
 func (db *DB) mCompaction() {
@@ -110,7 +110,7 @@ func (db *DB) memCompaction() error {
 
 	if resumeC != nil {
 		select {
-		case resumeC <- struct{}{}:
+		case <-resumeC:
 			close(resumeC)
 		}
 	}
@@ -278,7 +278,11 @@ func (db *DB) tableCompaction(c *Compaction) error {
 				}
 
 				// 检查需不需要暂停写入
-				db.pauseCompaction()
+				select {
+				case pauseCmd := <-db.tPauseCmdC:
+					db.pauseCompaction(pauseCmd)
+				default:
+				}
 				tw.append(iKey, iter.Value())
 			}
 		}
@@ -296,18 +300,10 @@ func (db *DB) tableCompaction(c *Compaction) error {
 	return db.s.commit(&sr)
 }
 
-func (db *DB) pauseCompaction() {
-
-	var pauseCmd <-chan struct{}
+func (db *DB) pauseCompaction(pauseCmd chan<- struct{}) {
 
 	select {
-	case pauseCmd = <-db.tPauseCmdC:
-	default:
-		return
-	}
-
-	select {
-	case <-pauseCmd:
+	case pauseCmd <- struct{}{}:
 	case <-db.closeC:
 		return
 	}
@@ -316,5 +312,71 @@ func (db *DB) pauseCompaction() {
 
 // 接收外部信号, 进行sstable文件合并
 func (db *DB) tCompaction() {
+
+	var (
+		x     cCmd
+		waitQ []cCmd
+		tErr  error
+	)
+
+	for {
+
+		if db.needCompaction() {
+
+			select {
+			case x = <-db.tcompCmdC:
+			case pauseC := <-db.tPauseCmdC:
+				db.pauseCompaction(pauseC)
+				continue
+			case <-db.closeC:
+				return
+			default:
+			}
+
+			if len(waitQ) > 0 && db.resumeWrite() {
+				for idx := range waitQ {
+					waitQ[idx].Ack(tErr)
+				}
+				waitQ = waitQ[:0]
+			}
+
+		} else {
+
+			for idx := range waitQ {
+				waitQ[idx].Ack(nil)
+			}
+			waitQ = waitQ[:0]
+
+			select {
+			case x = <-db.tcompCmdC:
+			case pauseC := <-db.tPauseCmdC:
+				db.pauseCompaction(pauseC)
+				continue
+			case <-db.closeC:
+				return
+			default:
+			}
+
+		}
+
+		if x != nil {
+			switch cmd := x.(type) {
+			case cAuto:
+				if cmd.ack != nil {
+					if db.resumeWrite() { // 说明当前不需要让db的写暂停
+						cmd.Ack(tErr)
+					} else {
+						waitQ = append(waitQ, cmd)
+					}
+				}
+			default:
+				panic("myLeveldb/unsupport cmd type")
+			}
+			x = nil
+		}
+
+		tErr = db.tableAutoCompaction()
+
+	}
 
 }

@@ -202,3 +202,20 @@ func memGet(mdb *memdb.MemDB, ikey internalKey, icmp *iComparer) (ok bool, value
 	return false, nil, err
 
 }
+
+func (db *DB) needCompaction() bool {
+
+	v := db.s.version()
+	defer v.unRef()
+
+	return v.cScore > 1 || atomic.LoadPointer(v.cSeek) != nil
+
+}
+
+func (db *DB) resumeWrite() bool {
+	v := db.s.version()
+	defer v.unRef()
+
+	return v.tLen(0) < db.s.Options.GetLevel0TriggerLen()
+
+}
